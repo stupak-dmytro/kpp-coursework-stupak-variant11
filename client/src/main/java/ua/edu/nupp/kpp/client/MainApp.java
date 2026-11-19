@@ -10,6 +10,8 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.ProgressBar;
+import javafx.scene.control.Separator;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
@@ -161,7 +163,13 @@ public class MainApp extends Application {
         Button update = new Button("Змінити");
         Button delete = new Button("Видалити");
         Button refresh = new Button("Оновити");
-        Button importFirst = new Button("Імпорт першого рядка CSV (тест)");
+
+        // Елементи фонового CSV-імпорту
+        TextField csvPath = new TextField("sample-data/stock.csv");
+        Button importCsv = new Button("Імпортувати CSV");
+        ProgressBar progress = new ProgressBar(0);
+        progress.setMaxWidth(Double.MAX_VALUE);
+        Label status = new Label("Імпорт не запускався");
 
         add.setOnAction(e -> safe(() -> {
             api.addStock(readStock(null, productId, quantity, minLevel, dailyConsumption));
@@ -178,13 +186,7 @@ public class MainApp extends Application {
             refreshAll();
         }));
         refresh.setOnAction(e -> refreshStocks());
-
-        // Початок CSV-імпорту: один рядок файлу -> клієнтська модель -> HTTP -> сервер
-        importFirst.setOnAction(e -> safe(() -> {
-            Stock fromCsv = CsvStockReader.readFirstRow(Path.of("sample-data", "stock.csv"));
-            api.addStock(fromCsv);
-            refreshStocks();
-        }));
+        importCsv.setOnAction(e -> safe(() -> startImport(csvPath, importCsv, progress, status)));
 
         stocks.getSelectionModel().selectedItemProperty().addListener((obs, oldValue, value) -> {
             if (value != null) {
@@ -201,7 +203,56 @@ public class MainApp extends Application {
                 label("Мінімальний рівень (більше 0)"), minLevel,
                 label("Споживання за добу"), dailyConsumption,
                 new HBox(8, add, update, delete, refresh),
-                importFirst));
+                new Separator(),
+                label("Імпорт залишків із CSV (відносний шлях до файлу)"), csvPath,
+                importCsv, progress, status));
+    }
+
+    // Запускає фоновий імпорт: інтерфейс не блокується, а ProgressBar і текст стану прив'язані до Task
+    private void startImport(TextField csvPath, Button importCsv, ProgressBar progress, Label status) {
+        ImportStocksTask task = new ImportStocksTask(api, Path.of(csvPath.getText().trim()));
+
+        progress.progressProperty().bind(task.progressProperty());
+        status.textProperty().bind(task.messageProperty());
+        importCsv.setDisable(true);
+
+        task.setOnSucceeded(e -> {
+            progress.progressProperty().unbind();
+            status.textProperty().unbind();
+            importCsv.setDisable(false);
+            ImportResult result = task.getValue();
+            status.setText("Імпортовано: " + result.imported() + ", пропущено: " + result.skipped());
+            refreshStocks();
+            if (result.skipped() > 0) {
+                showWarning(summary(result));
+            }
+        });
+        task.setOnFailed(e -> {
+            progress.progressProperty().unbind();
+            status.textProperty().unbind();
+            progress.setProgress(0);
+            importCsv.setDisable(false);
+            status.setText("Імпорт перервано");
+            LOG.warning(String.valueOf(task.getException().getMessage()));
+            showError(task.getException());
+        });
+
+        Thread thread = new Thread(task, "csv-import");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    private String summary(ImportResult result) {
+        StringBuilder text = new StringBuilder("Імпортовано: " + result.imported()
+                + ", пропущено: " + result.skipped() + "\n");
+        int shown = Math.min(result.errors().size(), 10);
+        for (int i = 0; i < shown; i++) {
+            text.append("\n").append(result.errors().get(i));
+        }
+        if (result.errors().size() > shown) {
+            text.append("\n... та ще ").append(result.errors().size() - shown);
+        }
+        return text.toString();
     }
 
     // ---------- Вкладка «Замовлення поповнення» ----------
@@ -359,6 +410,12 @@ public class MainApp extends Application {
         String message = e == null || e.getMessage() == null ? "Помилка" : e.getMessage();
         Alert dialog = new Alert(Alert.AlertType.ERROR, message, ButtonType.OK);
         dialog.setHeaderText(null);
+        dialog.showAndWait();
+    }
+
+    private void showWarning(String message) {
+        Alert dialog = new Alert(Alert.AlertType.WARNING, message, ButtonType.OK);
+        dialog.setHeaderText("Частину рядків не імпортовано");
         dialog.showAndWait();
     }
 

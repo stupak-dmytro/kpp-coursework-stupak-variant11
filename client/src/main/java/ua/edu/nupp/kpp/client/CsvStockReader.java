@@ -1,13 +1,9 @@
 package ua.edu.nupp.kpp.client;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.List;
-
-// Початок CSV-імпорту: послідовне читання одного рядка залишків без фонових потоків
+// Розбір CSV-файлу залишків товарів: формат product_id;quantity;min_level;daily_consumption
 public final class CsvStockReader {
+
+    public static final String HEADER = "product_id;quantity;min_level;daily_consumption";
 
     private static final String SEPARATOR = ";";
     private static final int COLUMNS = 4;
@@ -15,25 +11,15 @@ public final class CsvStockReader {
     private CsvStockReader() {
     }
 
-    // Читає файл, пропускає заголовок і розбирає перший рядок даних
-    public static Stock readFirstRow(Path path) {
-        List<String> lines;
-        try {
-            lines = Files.readAllLines(path, StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            throw new IllegalArgumentException("Не вдалося прочитати CSV-файл: " + path);
+    // Перевіряє заголовок файлу; BOM на початку файлу ігнорується
+    static void checkHeader(String line) {
+        String normalized = line == null ? "" : line.replace("\uFEFF", "").trim();
+        if (!HEADER.equals(normalized)) {
+            throw new IllegalArgumentException("Некоректний заголовок CSV-файлу: очікується " + HEADER);
         }
-        // перший рядок файлу є заголовком, тому починаємо з другого
-        for (int i = 1; i < lines.size(); i++) {
-            String line = lines.get(i).trim();
-            if (!line.isEmpty()) {
-                return parse(line, i + 1);
-            }
-        }
-        throw new IllegalArgumentException("У CSV-файлі немає рядків даних");
     }
 
-    // Формат рядка: product_id;quantity;min_level;daily_consumption
+    // Розбирає один рядок даних. Некоректний рядок не створює модель
     static Stock parse(String line, int lineNumber) {
         String[] parts = line.split(SEPARATOR, -1);
         if (parts.length != COLUMNS) {
@@ -53,6 +39,7 @@ public final class CsvStockReader {
         }
     }
 
+    // Приймає і крапку, і кому як десятковий роздільник
     private static double toDouble(String value) {
         return Double.parseDouble(value.trim().replace(',', '.'));
     }
