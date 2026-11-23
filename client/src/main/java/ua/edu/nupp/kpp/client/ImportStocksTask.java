@@ -8,15 +8,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 // Фоновий імпорт залишків із CSV: читання файлу, розбір рядків, передавання на сервер через HTTP-клієнт
 public class ImportStocksTask extends Task<ImportResult> {
 
     private static final Logger LOG = Logger.getLogger(ImportStocksTask.class.getName());
-
-    // Невелика пауза між рядками, щоб хід імпорту було видно на ProgressBar
-    private static final long DELAY_MS = 150;
 
     private final HttpWarehouseClient api;
     private final Path path;
@@ -31,8 +29,25 @@ public class ImportStocksTask extends Task<ImportResult> {
 
     @Override
     protected ImportResult call() throws Exception {
-        List<Row> rows = readRows();
+        LOG.info("Початок імпорту CSV: файл " + path.getFileName());
+
+        List<Row> rows;
+        try {
+            rows = readRows();
+        } catch (IllegalArgumentException e) {
+            LOG.warning("Імпорт не розпочато: " + e.getMessage());
+            throw e;
+        }
+
         int total = rows.size();
+        if (total == 0) {
+            // Файл містить лише заголовок: це нормальний граничний випадок, а не помилка
+            updateProgress(1, 1);
+            updateMessage("Немає рядків для імпорту");
+            LOG.info("Завершення імпорту: у файлі немає рядків даних");
+            return new ImportResult(0, List.of());
+        }
+
         int imported = 0;
         List<String> errors = new ArrayList<>();
 
@@ -43,29 +58,29 @@ public class ImportStocksTask extends Task<ImportResult> {
             Row row = rows.get(i);
             try {
                 Stock stock = CsvStockReader.parse(row.text(), row.number());
-                try {
-                    api.addStock(stock);
-                    imported++;
-                } catch (RuntimeException e) {
-                    String reason = "Рядок " + row.number() + ": сервер відхилив запис (" + e.getMessage() + ")";
-                    errors.add(reason);
-                    LOG.warning(reason);
-                }
+                api.addStock(stock);
+                imported++;
+            } catch (ServerUnavailableException e) {
+                // Сервер недоступний: імпорт зупиняється, а не вдає «успішний» результат
+                LOG.log(Level.SEVERE, "Імпорт перервано: сервер недоступний (оброблено " + i + " з "
+                        + total + ", імпортовано " + imported + ")", e);
+                throw e;
             } catch (IllegalArgumentException e) {
+                // некоректний рядок CSV
                 errors.add(e.getMessage());
                 LOG.warning(e.getMessage());
+            } catch (RuntimeException e) {
+                // сервер відповів помилкою (наприклад, неіснуючий товар або недопустиме значення)
+                String reason = "Рядок " + row.number() + ": сервер відхилив запис (" + e.getMessage() + ")";
+                errors.add(reason);
+                LOG.warning(reason);
             }
             updateProgress(i + 1, total);
             updateMessage("Оброблено " + (i + 1) + " з " + total);
-            try {
-                Thread.sleep(DELAY_MS);
-            } catch (InterruptedException e) {
-                if (isCancelled()) {
-                    break;
-                }
-                Thread.currentThread().interrupt();
-            }
         }
+
+        LOG.info("Завершення імпорту: імпортовано " + imported + ", пропущено " + errors.size()
+                + " із " + total + " рядків");
         return new ImportResult(imported, errors);
     }
 
@@ -88,9 +103,6 @@ public class ImportStocksTask extends Task<ImportResult> {
             if (!text.isEmpty()) {
                 rows.add(new Row(i + 1, text));
             }
-        }
-        if (rows.isEmpty()) {
-            throw new IllegalArgumentException("У CSV-файлі немає рядків даних");
         }
         return rows;
     }

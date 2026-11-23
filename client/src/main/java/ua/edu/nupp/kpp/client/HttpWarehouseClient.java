@@ -166,7 +166,8 @@ public class HttpWarehouseClient {
         try {
             response = http.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         } catch (IOException e) {
-            throw new RuntimeException("Не вдалося з'єднатися із сервером: " + e.getMessage(), e);
+            throw new ServerUnavailableException(
+                    "Сервер недоступний. Перевірте, чи запущено Tomcat і чи правильна адреса сервера.", e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new RuntimeException("Запит до сервера перервано", e);

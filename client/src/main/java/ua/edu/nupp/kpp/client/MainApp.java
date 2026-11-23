@@ -26,6 +26,7 @@ import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 
 import java.nio.file.Path;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public class MainApp extends Application {
@@ -170,6 +171,7 @@ public class MainApp extends Application {
         ProgressBar progress = new ProgressBar(0);
         progress.setMaxWidth(Double.MAX_VALUE);
         Label status = new Label("Імпорт не запускався");
+        status.setWrapText(true);
 
         add.setOnAction(e -> safe(() -> {
             api.addStock(readStock(null, productId, quantity, minLevel, dailyConsumption));
@@ -221,7 +223,11 @@ public class MainApp extends Application {
             status.textProperty().unbind();
             importCsv.setDisable(false);
             ImportResult result = task.getValue();
-            status.setText("Імпортовано: " + result.imported() + ", пропущено: " + result.skipped());
+            if (result.imported() == 0 && result.skipped() == 0) {
+                status.setText("Немає рядків для імпорту");
+            } else {
+                status.setText("Імпортовано: " + result.imported() + ", пропущено: " + result.skipped());
+            }
             refreshStocks();
             if (result.skipped() > 0) {
                 showWarning(summary(result));
@@ -232,8 +238,9 @@ public class MainApp extends Application {
             status.textProperty().unbind();
             progress.setProgress(0);
             importCsv.setDisable(false);
-            status.setText("Імпорт перервано");
-            LOG.warning(String.valueOf(task.getException().getMessage()));
+            // Частина записів могла бути збережена на сервері до збою
+            status.setText("Імпорт перервано. Частину записів могло бути збережено: натисніть «Оновити»");
+            LOG.log(Level.WARNING, "Імпорт CSV завершився помилкою", task.getException());
             showError(task.getException());
         });
 
