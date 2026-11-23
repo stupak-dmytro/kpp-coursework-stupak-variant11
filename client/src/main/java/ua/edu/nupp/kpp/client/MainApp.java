@@ -238,10 +238,19 @@ public class MainApp extends Application {
             status.textProperty().unbind();
             progress.setProgress(0);
             importCsv.setDisable(false);
-            // Частина записів могла бути збережена на сервері до збою
-            status.setText("Імпорт перервано. Частину записів могло бути збережено: натисніть «Оновити»");
-            LOG.log(Level.WARNING, "Імпорт CSV завершився помилкою", task.getException());
-            showError(task.getException());
+            Throwable error = task.getException();
+            if (error instanceof ServerUnavailableException) {
+                // Збій стався під час передавання даних: частина записів могла бути збережена
+                status.setText("Імпорт перервано: сервер недоступний. Частину записів могло бути збережено; "
+                        + "після відновлення сервера натисніть «Оновити»");
+            } else if (error instanceof IllegalArgumentException) {
+                // Помилка файлу виявлена до першого запиту до сервера
+                status.setText("Імпорт не розпочато: помилка файлу, дані не змінено");
+            } else {
+                status.setText("Імпорт перервано через неочікувану помилку. Частину записів могло бути збережено");
+            }
+            LOG.log(Level.WARNING, "Імпорт CSV завершився помилкою", error);
+            showError(error);
         });
 
         Thread thread = new Thread(task, "csv-import");
